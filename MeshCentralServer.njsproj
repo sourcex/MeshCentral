@@ -116,6 +116,7 @@
     <Compile Include="meshrelay.js" />
     <Compile Include="meshuser.js" />
     <Compile Include="mpsserver.js" />
+    <Compile Include="mqttbroker.js" />
     <Compile Include="public\scripts\agent-redir-rtc-0.1.0.js" />
     <Compile Include="swarmserver.js" />
     <Compile Include="multiserver.js" />
@@ -137,6 +138,7 @@
     <Compile Include="webauthn.js" />
     <Compile Include="webserver.js" />
     <Compile Include="winservice.js" />
+    <Content Include="agents\codesign.cer" />
     <Content Include="agents\compressModules.bat" />
     <Content Include="agents\MeshAgentOSXPackager.zip" />
     <Content Include="agents\meshagent_arm" />
@@ -263,6 +265,7 @@
     <Content Include="public\styles\font-awesome\scss\_screen-reader.scss" />
     <Content Include="public\styles\font-awesome\scss\_stacked.scss" />
     <Content Include="public\styles\font-awesome\scss\_variables.scss" />
+    <Content Include="public\styles\messenger.css" />
     <Content Include="public\styles\style.css" />
     <Content Include="readme.md" />
     <Content Include="sample-config.json" />

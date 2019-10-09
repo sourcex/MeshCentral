@@ -1771,6 +1771,7 @@
                 if ((node.conn & 2) != 0) { states.push('<span title="Intel&reg; AMT CIRA is connected and ready for use.">CIRA</span>'); }
                 else if ((node.conn & 4) != 0) { states.push('<span title="Intel&reg; AMT is routable.">Intel&reg; AMT</span>'); }
                 if ((node.conn & 8) != 0) { states.push('<span title="Mesh agent is reachable using another agent as relay.">Relay</span>'); }
+                if ((node.conn & 16) != 0) { states.push('<span title="MQTT connection to the device is active.">MQTT</span>'); }
             }
             if ((node.pwr != null) && (node.pwr != 0)) { states.push(powerStateStrings[node.pwr]); }
             return states.join(', ');
@@ -1918,7 +1919,13 @@
                             str += '<img src=images/link4.png height=10 width=10 title="Edit Intel&reg; AMT credentials" style=cursor:pointer onclick=editDeviceAmtSettings("' + node._id + '")>';
                         }
                     }
-                    x += addDeviceAttribute('Intel&reg; AMT', str);
+
+                    var meName = 'Intel&reg; ME';
+                    if (typeof node.intelamt.sku == 'number') {
+                        if ((node.intelamt.sku & 8) != 0) { meName = 'Intel&reg; AMT'; }
+                        else if ((node.intelamt.sku & 16) != 0) { meName = 'Intel&reg; SM'; }
+                    }
+                    x += addDeviceAttribute(meName, str);
                 }
 
                 // Attribute: Mesh Agent Tag
@@ -1939,6 +1946,7 @@
                     if ((node.conn & 2) != 0) cstate.push('<span title="Intel&reg; AMT CIRA is connected and ready for use.">Intel&reg; AMT CIRA</span>');
                     else if ((node.conn & 4) != 0) cstate.push('<span title="Intel&reg; AMT is routable and ready for use.">Intel&reg; AMT</span>');
                     if ((node.conn & 8) != 0) cstate.push('<span title="Software agent is reachable using another agent as relay.">Agent Relay</span>');
+                    if ((node.conn & 16) != 0) cstate.push('<span title="MQTT connection to the device is active.">MQTT</span>');
                     x += addDeviceAttribute('Connectivity', cstate.join(', '));
                 }
 
@@ -1978,6 +1986,7 @@
                 if ((connectivity & 1) != 0) { if (powerstate.length > 0) { powerstate += ', '; } powerstate += '<span style=font-size:10px title="Agent connected">Mesh Agent</span>'; }
                 if ((connectivity & 2) != 0) { if (powerstate.length > 0) { powerstate += ', '; } powerstate += '<span style=font-size:10px title="Intel&reg; AMT connected">Intel&reg; AMT connected</span>'; }
                 else if ((connectivity & 4) != 0) { if (powerstate.length > 0) { powerstate += ', '; } powerstate += '<span style=font-size:10px title="Intel&reg; AMT detected">Intel&reg; AMT detected</span>'; }
+                if ((connectivity & 16) != 0) { if (powerstate.length > 0) { powerstate += '<br/>'; } powerstate += '<span style=font-size:12px title="MQTT connected">MQTT channel connected</span>'; }
                 QH('MainComputerState', powerstate);
 
                 // Set the node icon
@@ -2012,7 +2021,11 @@
             QV('p10files', currentDevicePanel == 2);
             var menus = [];
             if (currentDevicePanel != 0) { menus.push({ n: 'General', f: 'setupDeviceMenu(0)' }); }
-            if ((currentDevicePanel != 1) && (currentNode != null) && ((meshrights & 8) || (meshrights & 256)) && ((currentNode.mtype == 1) || (currentNode.agent.caps & 1))) { menus.push({ n: 'Desktop', f: 'setupDeviceMenu(1)' }); }
+            if ((currentDevicePanel != 1) &&
+                (currentNode != null) &&
+                ((meshrights & 8) || (meshrights & 256)) &&
+                (((meshes[currentNode.meshid].mtype == 1) && ((typeof currentNode.intelamt.sku !== 'number') || ((currentNode.intelamt.sku & 8) != 0))) || (currentNode.agent && (currentNode.agent.caps & 1)))
+            ) { menus.push({ n: 'Desktop', f: 'setupDeviceMenu(1)' }); }
             if ((currentDevicePanel != 2) && (currentNode != null) && (meshrights & 8) && ((meshrights == 0xFFFFFFFF) || ((meshrights & 1024) == 0)) && ((currentNode.mtype == 2) && (currentNode.agent.caps & 4))) { menus.push({ n: 'Files', f: 'setupDeviceMenu(2)' }); }
             updateFooterMenu(menus);
         }
@@ -2245,7 +2258,17 @@
             // Show the right buttons
             QV('disconnectbutton1', (deskState != 0));
             QV('connectbutton1', (deskState == 0) && (mesh.mtype == 2) && ((meshrights & 8) || (meshrights & 256)));
-            QV('connectbutton1h', (deskState == 0) && ((currentNode.intelamt != null) && (meshrights & 8) && (mesh.mtype == 1 || currentNode.intelamt.state == 2) && ((currentNode.intelamt.ver != null) || (mesh.mtype == 1))));
+            QV('connectbutton1h',
+                (deskState == 0) &&
+                (meshrights & 8) &&
+                ((mesh.mtype == 1) ||
+                  (currentNode.intelamt != null) &&
+                  ((currentNode.intelamt.state == 2) &&
+                  (currentNode.intelamt.ver != null) &&
+                  (typeof currentNode.intelamt.sku == 'number') &&
+                  ((currentNode.intelamt.sku & 8) != 0))
+                )
+            );
 
             // Show the right settings
             QV('d7amtkvm', (currentNode.intelamt != null && ((currentNode.intelamt.ver != null) || (mesh.mtype == 1))) && ((deskState == 0) || (desktop.contype == 2)));

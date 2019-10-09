@@ -114,7 +114,7 @@ function run(argv) {
     //console.log('addedModules = ' + JSON.stringify(addedModules));
     var actionpath = 'meshaction.txt';
     if (args.actionfile != null) { actionpath = args.actionfile; }
-    var actions = ['HELP', 'ROUTE', 'MICROLMS', 'AMTPOWER', 'AMTFEATURES', 'AMTNETWORK', 'AMTLOADWEBAPP', 'AMTLOADSMALLWEBAPP', 'AMTLOADLARGEWEBAPP', 'AMTCLEARWEBAPP', 'AMTSTORAGESTATE', 'AMTINFO', 'AMTINFODEBUG', 'AMTVERSIONS', 'AMTHASHES', 'AMTSAVESTATE', 'AMTSCRIPT', 'AMTUUID', 'AMTCCM', 'AMTACM', 'AMTDEACTIVATE', 'AMTACMDEACTIVATE', 'SMBIOS', 'RAWSMBIOS', 'MESHCOMMANDER', 'AMTAUDITLOG', 'AMTEVENTLOG', 'AMTPRESENCE'];
+    var actions = ['HELP', 'ROUTE', 'MICROLMS', 'AMTSCAN', 'AMTPOWER', 'AMTFEATURES', 'AMTNETWORK', 'AMTLOADWEBAPP', 'AMTLOADSMALLWEBAPP', 'AMTLOADLARGEWEBAPP', 'AMTCLEARWEBAPP', 'AMTSTORAGESTATE', 'AMTINFO', 'AMTINFODEBUG', 'AMTVERSIONS', 'AMTHASHES', 'AMTSAVESTATE', 'AMTSCRIPT', 'AMTUUID', 'AMTCCM', 'AMTACM', 'AMTDEACTIVATE', 'AMTACMDEACTIVATE', 'SMBIOS', 'RAWSMBIOS', 'MESHCOMMANDER', 'AMTAUDITLOG', 'AMTEVENTLOG', 'AMTPRESENCE'];
 
     // Load the action file
     var actionfile = null;
@@ -151,6 +151,7 @@ function run(argv) {
     if ((typeof args.floppy) == 'string') { settings.floppy = args.floppy; }
     if ((typeof args.cdrom) == 'string') { settings.cdrom = args.cdrom; }
     if ((typeof args.tag) == 'string') { settings.tag = args.tag; }
+    if ((typeof args.scan) == 'string') { settings.scan = args.scan; }
     if ((typeof args.timeout) == 'string') { settings.timeout = parseInt(args.timeout); }
     if (args.debug === true) { settings.debuglevel = 1; }
     if (args.debug) { try { waitForDebugger(); } catch (e) { } }
@@ -194,6 +195,7 @@ function run(argv) {
         console.log('  AmtIDER           - Mount local disk image to remote computer.');
         console.log('  AmtFeatures       - Intel AMT features & user consent.');
         console.log('  AmtNetwork        - Intel AMT network interface settings.');
+        console.log('  AmtScan           - Search local network for Intel AMT devices.');
         console.log('\r\nHelp on a specific action using:\r\n');
         console.log('  meshcmd help [action]');
         exit(1); return;
@@ -373,6 +375,10 @@ function run(argv) {
             console.log('  --floppy [file]        Specifies .img file to be mounted as a flppy disk.');
             console.log('  --cdrom [file]         Specifies .img file to be mounted as a CDROM disk.');
             console.log('  --timeout [seconds]    Optional, disconnect after number of seconds without disk read.');
+        } else if (action == 'amtscan') {
+            console.log('AmtSCAN will look for Intel AMT device on the network. Example usage:\r\n\r\n  meshcmd amtscan --scan 192.168.1.0/24');
+            console.log('\r\Required arguments:\r\n');
+            console.log('  --scan [ip range]      The IP address range to perform the scan on.');
         } else {
             actions.shift();
             console.log('Invalid action, usage:\r\n\r\n  meshcmd help [action]\r\n\r\nValid actions are: ' + actions.join(', ') + '.');
@@ -438,13 +444,21 @@ function run(argv) {
             nextStepStorageUpload();
         }
     } else if ((settings.action == 'amtversion') || (settings.action == 'amtversions') || (settings.action == 'amtver')) {
-        // Display Intel AMT versions
+        // Display Intel ME versions
         var amtMeiModule, amtMei;
         try { amtMeiModule = require('amt-mei'); amtMei = new amtMeiModule(); } catch (ex) { console.log(ex); exit(1); return; }
         amtMei.on('error', function (e) { console.log('ERROR: ' + e); exit(1); return; });
         amtMei.getVersion(function (val) {
-            console.log("MEI Version = " + val.BiosVersion.toString());
-            for (var version in val.Versions) { console.log(val.Versions[version].Description + " = " + val.Versions[version].Version); }
+            console.log("BIOS Version = " + val.BiosVersion.toString());
+            for (var version in val.Versions) {
+                var extras = '', skuBits = ['', 'iQST', 'ASF', 'AMT', 'ISM', 'TPM', '', '', 'HomeIT', '', 'WOX', '', '', 'AT-p', 'Corporate', 'L3 Mgt Upgrade'];
+                if (val.Versions[version].Description == 'Sku') {
+                    var n = parseInt(val.Versions[version].Version), x = [], xx = 1;
+                    for (var i = 0; i < skuBits.length; i++) { if ((n & xx) != 0) { x.push(skuBits[i]); } xx = xx << 1; }
+                    if (x.length > 0) { extras = ' (' + x.join(', ') + ')' }
+                }
+                console.log(val.Versions[version].Description + " = " + val.Versions[version].Version + extras);
+            }
             exit(1); return;
         });
     } else if (settings.action == 'amthashes') {
@@ -472,7 +486,14 @@ function run(argv) {
         var amtMeiModule, amtMei;
         try { amtMeiModule = require('amt-mei'); amtMei = new amtMeiModule(); } catch (ex) { console.log(ex); exit(1); return; }
         amtMei.on('error', function (e) { console.log('ERROR: ' + e); exit(1); return; });
-        amtMei.getVersion(function (result) { if (result) { for (var version in result.Versions) { if (result.Versions[version].Description == 'AMT') { mestate.ver = result.Versions[version].Version; } } } });
+        amtMei.getVersion(function (result) {
+            if (result) {
+                for (var version in result.Versions) {
+                    if (result.Versions[version].Description == 'AMT') { mestate.ver = result.Versions[version].Version; }
+                    if (result.Versions[version].Description == 'Sku') { mestate.sku = parseInt(result.Versions[version].Version); }
+                }
+            }
+        });
         amtMei.getProvisioningState(function (result) { if (result) { mestate.ProvisioningState = result; } });
         amtMei.getProvisioningMode(function (result) { if (result) { mestate.ProvisioningMode = result; } });
         amtMei.getEHBCState(function (result) { if (result) { mestate.ehbc = result; } });
@@ -484,7 +505,9 @@ function run(argv) {
         amtMei.getDnsSuffix(function (result) {
             if (result) { mestate.dns = result; }
             if (mestate.ver && mestate.ProvisioningState && mestate.ProvisioningMode) {
-                var str = 'Intel AMT v' + mestate.ver;
+                var str = 'Intel ME v' + mestate.ver;
+                if (mestate.sku & 8) { str = 'Intel AMT v' + mestate.ver }
+                else if (mestate.sku & 16) { str = 'Intel SM v' + mestate.ver }
                 if (mestate.ProvisioningState.stateStr == 'PRE') { str += ', pre-provisioning state'; }
                 else if (mestate.ProvisioningState.stateStr == 'IN') { str += ', in-provisioning state'; }
                 else if (mestate.ProvisioningState.stateStr == 'POST') {
@@ -612,6 +635,29 @@ function run(argv) {
         startMeshCommander();
         //} else if (settings.action == 'amtdisable') { // Disable AMT Network Interface
         //    amtDisable();
+    } else if (settings.action == 'amtscan') {
+        // Scan the network for Intel AMT devices
+        if ((settings.scan == null) || (typeof settings.scan != 'string') || (settings.scan == '')) { console.log('No or invalid \"scan\" specified, use --scan [ip range].'); exit(1); return; }
+        console.log('Scanning: ' + settings.scan + '...');
+        var AMTScannerModule = require('amt-scanner');
+        var amtscanner = new AMTScannerModule(), r = '';
+        amtscanner.scan(settings.scan, 2000, function (data) {
+            if (data.length > 0) {
+                r = '', pstates = ['NotActivated', 'InActivation', 'Activated'];
+                for (var i in data) {
+                    var x = data[i];
+                    if (r != '') { r += '\r\n'; }
+                    r += x.address + ' - Intel AMT v' + x.majorVersion + '.' + x.minorVersion;
+                    if (x.provisioningState < 3) { r += (', ' + pstates[x.provisioningState]); }
+                    if (x.provisioningState == 2) { r += (', ' + x.openPorts.join(', ')); }
+                    r += '.';
+                }
+            } else {
+                r = 'No Intel AMT found.';
+            }
+            console.log(r);
+            exit(1);
+        });
     } else if (settings.action == 'amtauditlog') { // Read the Intel AMT audit log
         if (settings.hostname != null) {
             if ((settings.password == null) || (typeof settings.password != 'string') || (settings.password == '')) { console.log('No or invalid \"password\" specified, use --password [password].'); exit(1); return; }
@@ -1129,7 +1175,7 @@ function activeToACMEx(fwNonce, dnsSuffix, digestRealm, uuid, allowedModes) {
     var connection = http.request(options);
     connection.on('upgrade', function (response, socket) {
         settings.xxsocket = socket;
-        console.log('Connected, requesting activation...');
+        if (settings.action == 'amtdiscover') { console.log('Connected, performing discovery...'); } else { console.log('Connected, requesting activation...'); }
         socket.on('end', function () { console.log('Connection closed'); exit(0); });
         socket.on('error', function () { console.log('Connection error'); exit(100); });
         socket.on('data', function (data) {
@@ -1138,6 +1184,7 @@ function activeToACMEx(fwNonce, dnsSuffix, digestRealm, uuid, allowedModes) {
             try { cmd = JSON.parse(data); } catch (ex) { console.log('Unable to parse server response: ' + data); exit(100); return; }
             if (typeof cmd != 'object') { console.log('Invalid server response: ' + cmd); exit(100); return; }
             if (typeof cmd.errorText == 'string') { console.log('Server error: ' + cmd.errorText); exit(100); return; }
+            if (typeof cmd.messageText == 'string') { console.log('Server: ' + cmd.messageText); return; }
             switch (cmd.action) {
                 case 'acmactivate': {
                     // Server responded with ACM activation response
@@ -1204,7 +1251,7 @@ function activeToACMEx(fwNonce, dnsSuffix, digestRealm, uuid, allowedModes) {
         var action = 'acmactivate';
         if (settings.action == 'amtccm') { action = 'ccmactivate'; }
         if (settings.action == 'amtdiscover') { action = 'amtdiscover'; }
-        socket.write({ client: 'meshcmd', version: 1, action: action, fqdn: dnsSuffix, realm: digestRealm, nonce: fwNonce, uuid: uuid, profile: settings.profile, hashes: trustedHashes, tag: settings.tag, name: settings.name, ver: mestate.vers['AMT'], build: mestate.vers['Build Number'], modes: allowedModes, currentMode: mestate.controlMode });
+        socket.write({ client: 'meshcmd', version: 1, action: action, fqdn: dnsSuffix, realm: digestRealm, nonce: fwNonce, uuid: uuid, profile: settings.profile, hashes: trustedHashes, tag: settings.tag, name: settings.name, ver: mestate.vers['AMT'], build: mestate.vers['Build Number'], sku: parseInt(mestate.vers['Sku']), modes: allowedModes, currentMode: mestate.controlMode, hostname: require('os').hostname() });
     });
     connection.end();
 }

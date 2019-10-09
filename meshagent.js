@@ -44,7 +44,6 @@ module.exports.CreateMeshAgent = function (parent, db, ws, req, args, domain) {
 
     // Disconnect this agent
     obj.close = function (arg) {
-        obj.authenticated = -1;
         if ((arg == 1) || (arg == null)) { try { ws.close(); if (obj.nodeid != null) { parent.parent.debug('agent', 'Soft disconnect ' + obj.nodeid + ' (' + obj.remoteaddrport + ')'); } } catch (e) { console.log(e); } } // Soft close, close the websocket
         if (arg == 2) { try { ws._socket._parent.end(); if (obj.nodeid != null) { parent.parent.debug('agent', 'Hard disconnect ' + obj.nodeid + ' (' + obj.remoteaddrport + ')'); } } catch (e) { console.log(e); } } // Hard close, close the TCP socket
         // If arg == 3, don't communicate with this agent anymore, but don't disconnect (Duplicate agent).
@@ -81,8 +80,11 @@ module.exports.CreateMeshAgent = function (parent, db, ws, req, args, domain) {
             }
         } else {
             // Update the last connect time
-            if (obj.authenticated == 2) { db.Set({ _id: 'lc' + obj.dbNodeKey, type: 'lastconnect', domain: domain.id, time: obj.connectTime, addr: obj.remoteaddrport }); }
+            if (obj.authenticated == 2) { db.Set({ _id: 'lc' + obj.dbNodeKey, type: 'lastconnect', domain: domain.id, time: obj.connectTime, addr: obj.remoteaddrport, cause: 1 }); }
         }
+
+        // Set this agent as no longer authenticated
+        obj.authenticated = -1;
 
         // If we where updating the agent, clean that up.
         if (obj.agentUpdate != null) {
@@ -492,6 +494,22 @@ module.exports.CreateMeshAgent = function (parent, db, ws, req, args, domain) {
     // Return the mesh for this device, in some cases, we may auto-create the mesh.
     function getMeshAutoCreate() {
         var mesh = parent.meshes[obj.dbMeshKey];
+
+        // If the mesh was not found and we are in LAN mode, check of the domain can be corrected
+        if ((args.lanonly == true) && (mesh == null)) {
+            var smesh = obj.dbMeshKey.split('/');
+            for (var i in parent.parent.config.domains) {
+                mesh = parent.meshes['mesh/' + i + '/' + smesh[2]];
+                if (mesh != null) {
+                    obj.domain = domain = parent.parent.config.domains[i];
+                    obj.meshid = smesh[2];
+                    obj.dbMeshKey = 'mesh/' + i + '/' + smesh[2];
+                    obj.dbNodeKey = 'node/' + domain.id + '/' + obj.nodeid;
+                    break;
+                }
+            }
+        }
+
         if ((mesh == null) && (typeof domain.orphanagentuser == 'string')) {
             const adminUser = parent.users['user/' + domain.id + '/' + domain.orphanagentuser.toLowerCase()];
             if ((adminUser != null) && (adminUser.siteadmin == 0xFFFFFFFF)) {
@@ -666,7 +684,7 @@ module.exports.CreateMeshAgent = function (parent, db, ws, req, args, domain) {
 
                 // Mark when this device connected
                 obj.connectTime = Date.now();
-                db.Set({ _id: 'lc' + obj.dbNodeKey, type: 'lastconnect', domain: domain.id, time: obj.connectTime, addr: obj.remoteaddrport });
+                db.Set({ _id: 'lc' + obj.dbNodeKey, type: 'lastconnect', domain: domain.id, time: obj.connectTime, addr: obj.remoteaddrport, cause: 1 });
 
                 // Device already exists, look if changes have occured
                 var changes = [], change = 0, log = 0;
@@ -727,7 +745,7 @@ module.exports.CreateMeshAgent = function (parent, db, ws, req, args, domain) {
 
         // Mark when this device connected
         obj.connectTime = Date.now();
-        db.Set({ _id: 'lc' + obj.dbNodeKey, type: 'lastconnect', domain: domain.id, time: obj.connectTime, addr: obj.remoteaddrport });
+        db.Set({ _id: 'lc' + obj.dbNodeKey, type: 'lastconnect', domain: domain.id, time: obj.connectTime, addr: obj.remoteaddrport, cause: 1 });
 
         // This node does not exist, create it.
         var device = { type: 'node', mtype: mesh.mtype, _id: obj.dbNodeKey, icon: obj.agentInfo.platformType, meshid: obj.dbMeshKey, name: obj.agentInfo.computerName, rname: obj.agentInfo.computerName, domain: domain.id, agent: { ver: obj.agentInfo.agentVersion, id: obj.agentInfo.agentId, caps: obj.agentInfo.capabilities }, host: null };
@@ -1355,24 +1373,25 @@ module.exports.CreateMeshAgent = function (parent, db, ws, req, args, domain) {
                 //if (command.users) { console.log(command.users); }
 
                 // Check if anything changes
-                if (command.name && (command.name != device.name)) { change = 1; log = 1; device.name = command.name; changes.push('name'); }
+                if (command.name && (typeof command.name == 'string') && (command.name != device.name)) { change = 1; log = 1; device.name = command.name; changes.push('name'); }
                 if ((command.caps != null) && (device.agent.core != command.value)) { if ((command.value == null) && (device.agent.core != null)) { delete device.agent.core; } else { device.agent.core = command.value; } change = 1; } // Don't save this as an event to the db.
                 if ((command.caps != null) && ((device.agent.caps & 0xFFFFFFE7) != (command.caps & 0xFFFFFFE7))) { device.agent.caps = ((device.agent.caps & 24) + (command.caps & 0xFFFFFFE7)); change = 1; } // Allow Javascript on the agent to change all capabilities except console and javascript support, Don't save this as an event to the db.
-                if ((command.osdesc != null) && (device.osdesc != command.osdesc)) { device.osdesc = command.osdesc; change = 1; changes.push('os desc'); } // Don't save this as an event to the db.
+                if ((command.osdesc != null) && (typeof command.osdesc == 'string') && (device.osdesc != command.osdesc)) { device.osdesc = command.osdesc; change = 1; changes.push('os desc'); } // Don't save this as an event to the db.
                 if (device.ip != obj.remoteaddr) { device.ip = obj.remoteaddr; change = 1; }
                 if (command.intelamt) {
                     if (!device.intelamt) { device.intelamt = {}; }
-                    if ((command.intelamt.ver != null) && (device.intelamt.ver != command.intelamt.ver)) { changes.push('AMT version'); device.intelamt.ver = command.intelamt.ver; change = 1; log = 1; }
-                    if ((command.intelamt.state != null) && (device.intelamt.state != command.intelamt.state)) { changes.push('AMT state'); device.intelamt.state = command.intelamt.state; change = 1; log = 1; }
-                    if ((command.intelamt.flags != null) && (device.intelamt.flags != command.intelamt.flags)) {
+                    if ((command.intelamt.ver != null) && (typeof command.intelamt.ver == 'string') && (command.intelamt.ver.length < 12) && (device.intelamt.ver != command.intelamt.ver)) { changes.push('AMT version'); device.intelamt.ver = command.intelamt.ver; change = 1; log = 1; }
+                    if ((command.intelamt.sku != null) && (typeof command.intelamt.sku == 'number') && (device.intelamt.sku !== command.intelamt.sku)) { changes.push('AMT SKU'); device.intelamt.sku = command.intelamt.sku; change = 1; log = 1; }
+                    if ((command.intelamt.state != null) && (typeof command.intelamt.state == 'number') && (device.intelamt.state != command.intelamt.state)) { changes.push('AMT state'); device.intelamt.state = command.intelamt.state; change = 1; log = 1; }
+                    if ((command.intelamt.flags != null) && (typeof command.intelamt.flags == 'number') && (device.intelamt.flags != command.intelamt.flags)) {
                         if (device.intelamt.flags) { changes.push('AMT flags (' + device.intelamt.flags + ' --> ' + command.intelamt.flags + ')'); } else { changes.push('AMT flags (' + command.intelamt.flags + ')'); }
                         device.intelamt.flags = command.intelamt.flags; change = 1; log = 1;
                     }
-                    if ((command.intelamt.realm != null) && (device.intelamt.realm != command.intelamt.realm)) { changes.push('AMT realm'); device.intelamt.realm = command.intelamt.realm; change = 1; log = 1; }
-                    if ((command.intelamt.host != null) && (device.intelamt.host != command.intelamt.host)) { changes.push('AMT host'); device.intelamt.host = command.intelamt.host; change = 1; log = 1; }
-                    if ((command.intelamt.uuid != null) && (device.intelamt.uuid != command.intelamt.uuid)) { changes.push('AMT uuid'); device.intelamt.uuid = command.intelamt.uuid; change = 1; log = 1; }
-                    if ((command.intelamt.user != null) && (device.intelamt.user != command.intelamt.user)) { changes.push('AMT user'); device.intelamt.user = command.intelamt.user; change = 1; log = 1; }
-                    if ((command.intelamt.pass != null) && (device.intelamt.pass != command.intelamt.pass)) { changes.push('AMT pass'); device.intelamt.pass = command.intelamt.pass; change = 1; log = 1; }
+                    if ((command.intelamt.realm != null) && (typeof command.intelamt.realm == 'string') && (device.intelamt.realm != command.intelamt.realm)) { changes.push('AMT realm'); device.intelamt.realm = command.intelamt.realm; change = 1; log = 1; }
+                    if ((command.intelamt.host != null) && (typeof command.intelamt.host == 'string') && (device.intelamt.host != command.intelamt.host)) { changes.push('AMT host'); device.intelamt.host = command.intelamt.host; change = 1; log = 1; }
+                    if ((command.intelamt.uuid != null) && (typeof command.intelamt.uuid == 'string') && (device.intelamt.uuid != command.intelamt.uuid)) { changes.push('AMT uuid'); device.intelamt.uuid = command.intelamt.uuid; change = 1; log = 1; }
+                    if ((command.intelamt.user != null) && (typeof command.intelamt.user == 'string') && (device.intelamt.user != command.intelamt.user)) { changes.push('AMT user'); device.intelamt.user = command.intelamt.user; change = 1; log = 1; }
+                    if ((command.intelamt.pass != null) && (typeof command.intelamt.pass == 'string') && (device.intelamt.pass != command.intelamt.pass)) { changes.push('AMT pass'); device.intelamt.pass = command.intelamt.pass; change = 1; log = 1; }
                 }
                 if (command.av) {
                     if (!device.av) { device.av = []; }

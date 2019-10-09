@@ -479,75 +479,106 @@ module.exports.CreateMeshUser = function (parent, db, ws, req, args, domain, use
                 }
             case 'powertimeline':
                 {
-                    // TODO: Check that we have permissions for this node.
+                    // Perform pre-validation
+                    if (common.validateString(command.nodeid, 0, 128) == false) break;
+                    var snode = command.nodeid.split('/');
+                    if ((snode.length != 3) || (snode[1] != domain.id)) break;
 
-                    // Query the database for the power timeline for a given node
-                    // The result is a compacted array: [ startPowerState, startTimeUTC, powerState ] + many[ deltaTime, powerState ]
-                    if (common.validateString(command.nodeid, 0, 128) == false) return;
-                    db.getPowerTimeline(command.nodeid, function (err, docs) {
-                        if ((err == null) && (docs != null) && (docs.length > 0)) {
-                            var timeline = [], time = null, previousPower;
-                            for (i in docs) {
-                                var doc = docs[i], j = parseInt(i);
-                                doc.time = Date.parse(doc.time);
-                                if (time == null) { // First element
-                                    // Skip all starting power 0 events.
-                                    if ((doc.power == 0) && ((doc.oldPower == null) || (doc.oldPower == 0))) continue;
-                                    time = doc.time;
-                                    if (doc.oldPower) { timeline.push(doc.oldPower, time / 1000, doc.power); } else { timeline.push(0, time / 1000, doc.power); }
-                                } else if (previousPower != doc.power) { // Delta element
-                                    // If this event is of a short duration (2 minutes or less), skip it.
-                                    if ((docs.length > (j + 1)) && ((Date.parse(docs[j + 1].time) - doc.time) < 120000)) continue;
-                                    timeline.push((doc.time - time) / 1000, doc.power);
-                                    time = doc.time;
+                    // Check that we have permissions for this node.
+                    if (obj.user.links == null) return;
+                    db.Get(command.nodeid, function (err, nodes) {
+                        if (nodes == null || nodes.length != 1) return;
+                        const node = nodes[0];
+
+                        var meshlink = obj.user.links[node.meshid];
+                        if ((meshlink != null) && (meshlink.rights != 0)) {
+                            // Query the database for the power timeline for a given node
+                            // The result is a compacted array: [ startPowerState, startTimeUTC, powerState ] + many[ deltaTime, powerState ]
+                            db.getPowerTimeline(command.nodeid, function (err, docs) {
+                                if ((err == null) && (docs != null) && (docs.length > 0)) {
+                                    var timeline = [], time = null, previousPower;
+                                    for (i in docs) {
+                                        var doc = docs[i], j = parseInt(i);
+                                        doc.time = Date.parse(doc.time);
+                                        if (time == null) { // First element
+                                            // Skip all starting power 0 events.
+                                            if ((doc.power == 0) && ((doc.oldPower == null) || (doc.oldPower == 0))) continue;
+                                            time = doc.time;
+                                            if (doc.oldPower) { timeline.push(doc.oldPower, time / 1000, doc.power); } else { timeline.push(0, time / 1000, doc.power); }
+                                        } else if (previousPower != doc.power) { // Delta element
+                                            // If this event is of a short duration (2 minutes or less), skip it.
+                                            if ((docs.length > (j + 1)) && ((Date.parse(docs[j + 1].time) - doc.time) < 120000)) continue;
+                                            timeline.push((doc.time - time) / 1000, doc.power);
+                                            time = doc.time;
+                                        }
+                                        previousPower = doc.power;
+                                    }
+                                    try { ws.send(JSON.stringify({ action: 'powertimeline', nodeid: command.nodeid, timeline: timeline, tag: command.tag })); } catch (ex) { }
+                                } else {
+                                    // No records found, send current state if we have it
+                                    var state = parent.parent.GetConnectivityState(command.nodeid);
+                                    if (state != null) { try { ws.send(JSON.stringify({ action: 'powertimeline', nodeid: command.nodeid, timeline: [state.powerState, Date.now(), state.powerState], tag: command.tag })); } catch (ex) { } }
                                 }
-                                previousPower = doc.power;
-                            }
-                            try { ws.send(JSON.stringify({ action: 'powertimeline', nodeid: command.nodeid, timeline: timeline, tag: command.tag })); } catch (ex) { }
-                        } else {
-                            // No records found, send current state if we have it
-                            var state = parent.parent.GetConnectivityState(command.nodeid);
-                            if (state != null) { try { ws.send(JSON.stringify({ action: 'powertimeline', nodeid: command.nodeid, timeline: [state.powerState, Date.now(), state.powerState], tag: command.tag })); } catch (ex) { } }
+                            });
                         }
                     });
                     break;
                 }
             case 'getsysinfo':
                 {
-                    // TODO: Check that we have permissions for this node.
-
+                    // Perform pre-validation
                     if (common.validateString(command.nodeid, 0, 128) == false) break;
                     var snode = command.nodeid.split('/');
                     if ((snode.length != 3) || (snode[1] != domain.id)) break;
-                    // Query the database system information
-                    db.Get('si' + command.nodeid, function (err, docs) {
-                        if ((docs != null) && (docs.length > 0)) {
-                            var doc = docs[0];
-                            doc.action = 'getsysinfo';
-                            doc.nodeid = command.nodeid;
-                            doc.tag = command.tag;
-                            delete doc.type;
-                            delete doc.domain;
-                            delete doc._id;
-                            try { ws.send(JSON.stringify(doc)); } catch (ex) { }
-                        } else {
-                            try { ws.send(JSON.stringify({ action: 'getsysinfo', nodeid: command.nodeid, tag: command.tag, noinfo: true })); } catch (ex) { }
+
+                    // Check that we have permissions for this node.
+                    if (obj.user.links == null) return;
+                    db.Get(command.nodeid, function (err, nodes) {
+                        if (nodes == null || nodes.length != 1) return;
+                        const node = nodes[0];
+
+                        var meshlink = obj.user.links[node.meshid];
+                        if ((meshlink != null) && (meshlink.rights != 0)) {
+                            // Query the database system information
+                            db.Get('si' + command.nodeid, function (err, docs) {
+                                if ((docs != null) && (docs.length > 0)) {
+                                    var doc = docs[0];
+                                    doc.action = 'getsysinfo';
+                                    doc.nodeid = command.nodeid;
+                                    doc.tag = command.tag;
+                                    delete doc.type;
+                                    delete doc.domain;
+                                    delete doc._id;
+                                    try { ws.send(JSON.stringify(doc)); } catch (ex) { }
+                                } else {
+                                    try { ws.send(JSON.stringify({ action: 'getsysinfo', nodeid: command.nodeid, tag: command.tag, noinfo: true })); } catch (ex) { }
+                                }
+                            });
                         }
                     });
                     break;
                 }
             case 'lastconnect':
                 {
-                    // TODO: Check that we have permissions for this node.
-
+                    // Perform pre-validation
                     if (common.validateString(command.nodeid, 0, 128) == false) return;
                     var snode = command.nodeid.split('/');
                     if ((snode.length != 3) || (snode[1] != domain.id)) break;
 
-                    // Query the database for the last time this node connected
-                    db.Get('lc' + command.nodeid, function (err, docs) {
-                        if ((docs != null) && (docs.length > 0)) {
-                            try { ws.send(JSON.stringify({ action: 'lastconnect', nodeid: command.nodeid, time: docs[0].time, addr: docs[0].addr })); } catch (ex) { }
+                    // Check that we have permissions for this node.
+                    if (obj.user.links == null) return;
+                    db.Get(command.nodeid, function (err, nodes) {
+                        if (nodes == null || nodes.length != 1) return;
+                        const node = nodes[0];
+
+                        var meshlink = obj.user.links[node.meshid];
+                        if ((meshlink != null) && (meshlink.rights != 0)) {
+                            // Query the database for the last time this node connected
+                            db.Get('lc' + command.nodeid, function (err, docs) {
+                                if ((docs != null) && (docs.length > 0)) {
+                                    try { ws.send(JSON.stringify({ action: 'lastconnect', nodeid: command.nodeid, time: docs[0].time, addr: docs[0].addr })); } catch (ex) { }
+                                }
+                            });
                         }
                     });
                     break;
@@ -877,7 +908,7 @@ module.exports.CreateMeshUser = function (parent, db, ws, req, args, domain, use
                         // Check that the user has access to this nodeid
                         if (obj.user.links == null) return;
                         db.Get(command.nodeid, function (err, nodes) {
-                            if (nodes.length != 1) return;
+                            if ((nodes == null) || (nodes.length != 1)) return;
                             const node = nodes[0];
 
                             var meshlink = obj.user.links[node.meshid];
@@ -1956,7 +1987,7 @@ module.exports.CreateMeshUser = function (parent, db, ws, req, args, domain, use
                     // For each nodeid, change the group
                     for (var i = 0; i < command.nodeids.length; i++) {
                         db.Get(command.nodeids[i], function (err, nodes) {
-                            if (nodes.length != 1) return;
+                            if ((nodes == null) || (nodes.length != 1)) return;
                             const node = nodes[0];
 
                             // Check if already in the right mesh
@@ -2076,6 +2107,9 @@ module.exports.CreateMeshUser = function (parent, db, ws, req, args, domain, use
                                     // Check if this user has rights to do this
                                     if (mesh.links[user._id] != null && ((mesh.links[user._id].rights & 64) != 0)) {
 
+                                        // If this device is connected on MQTT, send a wake action.
+                                        if (parent.parent.mqttbroker != null) { parent.parent.mqttbroker.publish(node._id, 'powerAction', 'wake'); }
+
                                         // Get the device interface information
                                         db.Get('if' + node._id, function (err, nodeifs) {
                                             if ((nodeifs != null) && (nodeifs.length == 1)) {
@@ -2115,6 +2149,7 @@ module.exports.CreateMeshUser = function (parent, db, ws, req, args, domain, use
             case 'poweraction':
                 {
                     if (common.validateArray(command.nodeids, 1) == false) break; // Check nodeid's
+                    if (common.validateInt(command.actiontype, 2, 4) == false) break; // Check actiontype
                     for (i in command.nodeids) {
                         nodeid = command.nodeids[i];
                         var powerActions = 0;
@@ -2128,6 +2163,8 @@ module.exports.CreateMeshUser = function (parent, db, ws, req, args, domain, use
                                 // Get the mesh for this device
                                 mesh = parent.meshes[node.meshid];
                                 if (mesh) {
+                                    // If this device is connected on MQTT, send a power action.
+                                    if (parent.parent.mqttbroker != null) { parent.parent.mqttbroker.publish(nodeid, 'powerAction', ['', '', 'poweroff', 'reset', 'sleep'][command.actiontype]); }
 
                                     // Check if this user has rights to do this
                                     if (mesh.links[user._id] != null && ((mesh.links[user._id].rights & 8) != 0)) { // "Remote Control permission"
@@ -2539,7 +2576,7 @@ module.exports.CreateMeshUser = function (parent, db, ws, req, args, domain, use
                         actionText = 'New 2FA backup codes generated.';
                     } else if (command.subaction == 2) { // Clear all tokens
                         actionTaken = (user.otpkeys != null);
-                        user.otpkeys = null;
+                        delete user.otpkeys;
                         if (actionTaken) { actionText = '2FA backup codes cleared.'; }
                     }
 
@@ -2815,6 +2852,7 @@ module.exports.CreateMeshUser = function (parent, db, ws, req, args, domain, use
                 if (command.meshid.split('/').length == 1) { command.meshid = 'mesh/' + domain.id + '/' + command.meshid; }
                 var smesh = command.meshid.split('/');
                 if ((smesh.length != 3) || (smesh[0] != 'mesh') || (smesh[1] != domain.id)) { err = 'Invalid group id'; }
+                var serverName = parent.getWebServerName(domain);
 
                 // Handle any errors
                 if (err != null) {
@@ -2831,7 +2869,8 @@ module.exports.CreateMeshUser = function (parent, db, ws, req, args, domain, use
                 var httpsPort = ((args.aliasport == null) ? args.port : args.aliasport); // Use HTTPS alias port is specified
                 var xdomain = (domain.dns == null) ? domain.id : '';
                 if (xdomain != '') xdomain += "/";
-                var url = "http" + (args.notls ? '' : 's') + "://" + parent.getWebServerName(domain) + ":" + httpsPort + "/" + xdomain + "agentinvite?c=" + inviteCookie;
+                var url = "http" + (args.notls ? '' : 's') + "://" + serverName + ":" + httpsPort + "/" + xdomain + "agentinvite?c=" + inviteCookie;
+                if (serverName.split('.') == 1) { url = "/" + xdomain + "agentinvite?c=" + inviteCookie; }
 
                 ws.send(JSON.stringify({ action: 'createInviteLink', meshid: command.meshid, url: url, expire: command.expire, cookie: inviteCookie, responseid: command.responseid, tag: command.tag }));
                 break;
@@ -2840,6 +2879,92 @@ module.exports.CreateMeshUser = function (parent, db, ws, req, args, domain, use
                 if ((user.siteadmin == 0xFFFFFFFF) && (typeof command.traceSources == 'object')) {
                     parent.parent.debugRemoteSources = command.traceSources;
                     parent.parent.DispatchEvent(['*'], obj, { action: 'traceinfo', userid: user._id, username: user.name, traceSources: command.traceSources, nolog: 1, domain: domain.id });
+                }
+                break;
+            }
+            case 'sendmqttmsg': {
+                if (common.validateArray(command.nodeids, 1) == false) { err = 'Invalid nodeids'; }; // Check nodeid's
+                if (common.validateString(command.topic, 1, 64) == false) { err = 'Invalid topic'; } // Check the topic
+                if (common.validateString(command.msg, 1, 4096) == false) { err = 'Invalid msg'; } // Check the message
+
+                // Handle any errors
+                if (err != null) {
+                    if (command.responseid != null) { try { ws.send(JSON.stringify({ action: 'sendmqttmsg', responseid: command.responseid, result: err })); } catch (ex) { } }
+                    break;
+                }
+
+                // TODO: We can optimize this a lot.
+                // - We should get a full list of all MAC's to wake first.
+                // - We should try to only have one agent per subnet (using Gateway MAC) send a wake-on-lan.
+                for (i in command.nodeids) {
+                    nodeid = command.nodeids[i];
+                    var wakeActions = 0;
+                    if (common.validateString(nodeid, 1, 1024) == false) break; // Check nodeid
+                    if ((nodeid.split('/').length == 3) && (nodeid.split('/')[1] == domain.id)) { // Validate the domain, operation only valid for current domain
+                        // Get the device
+                        db.Get(nodeid, function (err, nodes) {
+                            if ((nodes == null) || (nodes.length != 1)) return;
+                            var node = nodes[0];
+
+                            // Get the mesh for this device
+                            mesh = parent.meshes[node.meshid];
+                            if (mesh) {
+                                // Check if this user has rights to do this
+                                if (mesh.links[user._id] != null && ((mesh.links[user._id].rights & 64) != 0)) {
+                                    // If this device is connected on MQTT, send a wake action.
+                                    if (parent.parent.mqttbroker != null) { parent.parent.mqttbroker.publish(node._id, command.topic, command.msg); }
+                                }
+                            }
+                        });
+                    }
+                }
+
+                break;
+            }
+            case 'getmqttlogin': {
+                var err = null;
+                if (parent.parent.mqttbroker == null) { err = 'MQTT not supported on this server'; }
+                if (common.validateString(command.nodeid, 1, 1024) == false) { err = 'Invalid nodeid'; } // Check the nodeid
+
+                // Handle any errors
+                if (err != null) { if (command.responseid != null) { try { ws.send(JSON.stringify({ action: 'getmqttlogin', responseid: command.responseid, result: err })); } catch (ex) { } } break; }
+
+                var nodeid = command.nodeid;
+                if ((nodeid.split('/').length == 3) && (nodeid.split('/')[1] == domain.id)) { // Validate the domain, operation only valid for current domain
+                    // Get the device
+                    db.Get(nodeid, function (err, nodes) {
+                        if ((nodes == null) || (nodes.length != 1)) { if (command.responseid != null) { try { ws.send(JSON.stringify({ action: 'getmqttlogin', responseid: command.responseid, result: 'Invalid node id' })); } catch (ex) { } return; } }
+                        var node = nodes[0];
+                        
+                        // Get the device group for this node
+                        var mesh = parent.meshes[node.meshid];
+                        if (mesh) {
+                            // Check if this user has rights to do this
+                            if ((mesh.links[user._id] != null) && (mesh.links[user._id].rights == 0xFFFFFFFF)) {
+                                var token = parent.parent.mqttbroker.generateLogin(mesh._id, node._id);
+                                var r = { action: 'getmqttlogin', responseid: command.responseid, nodeid: node._id, user: token.user, pass: token.pass };
+                                const serverName = parent.getWebServerName(domain);
+
+                                // Add MPS URL
+                                if (parent.parent.mpsserver != null) {
+                                    r.mpsCertHashSha384 = parent.parent.certificateOperations.getCertHash(parent.parent.mpsserver.certificates.mps.cert);
+                                    r.mpsCertHashSha1 = parent.parent.certificateOperations.getCertHashSha1(parent.parent.mpsserver.certificates.mps.cert);
+                                    r.mpsUrl = 'mqtts://' + serverName + ':' + ((args.mpsaliasport != null) ? args.mpsaliasport : args.mpsport) + '/';
+                                }
+
+                                // Add WS URL
+                                var xdomain = (domain.dns == null) ? domain.id : '';
+                                if (xdomain != '') xdomain += "/";
+                                var httpsPort = ((args.aliasport == null) ? args.port : args.aliasport); // Use HTTPS alias port is specified
+                                r.wsUrl = "ws" + (args.notls ? '' : 's') + "://" + serverName + ":" + httpsPort + "/" + xdomain + "mqtt.ashx";
+                                r.wsTrustedCert = parent.isTrustedCert(domain);
+
+                                try { ws.send(JSON.stringify(r)); } catch (ex) { }
+                            } else {
+                                if (command.responseid != null) { try { ws.send(JSON.stringify({ action: 'getmqttlogin', responseid: command.responseid, result: 'Unable to perform this operation' })); } catch (ex) { } }
+                            }
+                        }
+                    });
                 }
                 break;
             }
